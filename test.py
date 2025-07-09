@@ -12,4 +12,4 @@ def client():
 def test_app_is_working(client):
     response = client.get('/')
     assert response.status_code == 200
-    assert b"Hello World!" in response.data
+    assert b"welcome to clouReality Tutorial, please like and comment!" in response.data
