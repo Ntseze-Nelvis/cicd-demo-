@@ -1,5 +1,5 @@
 # Use official Python slim image for smaller size
-FROM python:3.8-slim
+FROM python:3.9-slim  # Changed from 3.8 to 3.9
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
