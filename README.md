@@ -1,2 +1,2 @@
 # cicd-demo
-CICD Demo prc
+CICD Demo prac
