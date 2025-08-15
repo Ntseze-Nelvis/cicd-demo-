@@ -46,12 +46,12 @@ pipeline {
                 scannerHome = tool "${SONARSCANNER}"
             }
             steps {
-               withSonarQubeEnv("${SONARSERVER}") {
+               withSonarQubeEnv("${SONAR_TOKEN}") {
                    sh """${scannerHome}/bin/sonar-scanner \
                    -Dsonar.host.url=${SONAR_HOST_URL} \
                    -Dsonar.login=${SONAR_TOKEN} \
-                   -Dsonar.projectKey=sonar-token \
-                   -Dsonar.projectName=sonar-token \
+                   -Dsonar.projectKey=sonartokene \
+                   -Dsonar.projectName=sonartokene \
                    -Dsonar.projectVersion=1.0 \
                    -Dsonar.organization=nel-org \
                    -Dsonar.sources=src/ \
