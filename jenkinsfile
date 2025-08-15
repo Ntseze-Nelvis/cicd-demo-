@@ -6,15 +6,18 @@ pipeline {
     }  
 
     environment {        
-        SONARSERVER = 'sonarserver'
+        SONARSERVER = 'sonarserver'  // Must match Jenkins config name
         SONARSCANNER = 'sonarscanner'
         IMAGE_NAME = 'nelvis1/ecommerce-app'
-        IMAGE_TAG  = 'latest'
+        IMAGE_TAG = 'latest'
+        // SonarCloud-specific variables
+        SONAR_HOST_URL = 'https://sonarcloud.io'
+        SONAR_TOKEN = credentials('sonar-token')  // Jenkins credential ID
     }
  
 
     stages {
-        stage('Build'){
+        stage('Build') {
             steps {
                 sh 'mvn clean install -DskipTests'
             }
@@ -26,14 +29,13 @@ pipeline {
             }
         }
 
-        stage('Test'){
+        stage('Test') {
             steps {
                 sh 'mvn test'
             }
-
         }
 
-        stage('Checkstyle Analysis'){
+        stage('Checkstyle Analysis') {
             steps {
                 sh 'mvn checkstyle:checkstyle'
             }
@@ -45,18 +47,22 @@ pipeline {
             }
             steps {
                withSonarQubeEnv("${SONARSERVER}") {
-                   sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=sonar-token \
-                   -Dsonar.projectName=sonar-token\
+                   sh """${scannerHome}/bin/sonar-scanner \
+                   -Dsonar.host.url=${SONAR_HOST_URL} \
+                   -Dsonar.login=${SONAR_TOKEN} \
+                   -Dsonar.projectKey=sonar-token \
+                   -Dsonar.projectName=sonar-token \
                    -Dsonar.projectVersion=1.0 \
                    -Dsonar.organization=nel-org \
                    -Dsonar.sources=src/ \
-                   -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
+                   -Dsonar.java.binaries=target/classes/ \
                    -Dsonar.junit.reportsPath=target/surefire-reports/ \
                    -Dsonar.jacoco.reportsPath=target/jacoco.exec \
-                   -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml'''
-              }
+                   -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml"""
+               }
             }
         }
+
         stage('OWASP Dependency Check') {
             steps {
                 sh '''
@@ -69,83 +75,73 @@ pipeline {
                 echo "Unzipping..."
                 unzip -o -q dependency-check.zip -d dependency-check-dir
 
-                echo "Listing dependency-check-dir contents:"
-                ls -l dependency-check-dir/dependency-check/bin/
-
                 echo "Setting executable permission..."
                 chmod +x dependency-check-dir/dependency-check/bin/dependency-check.sh
 
                 echo "Running OWASP Dependency-Check..."
-                ./dependency-check-dir/dependency-check/bin/dependency-check.sh --version || echo "Failed to run dependency-check.sh"
-
                 ./dependency-check-dir/dependency-check/bin/dependency-check.sh \
                     --project "MyProject" \
                     --scan . \
                     --format HTML \
                     --out owasp-report \
                     --failOnCVSS 7 || true
-
-                echo "OWASP scan complete, reports in owasp-report/"
                 '''
             }
         }
 
         stage('Building image') {
-            steps{
-              script {
-                sh 'docker build -t $IMAGE_NAME:$BUILD_NUMBER .'
-                sh 'docker tag $IMAGE_NAME:$BUILD_NUMBER $IMAGE_NAME:$IMAGE_TAG'
-              }
+            steps {
+                script {
+                    sh "docker build -t $IMAGE_NAME:$BUILD_NUMBER ."
+                    sh "docker tag $IMAGE_NAME:$BUILD_NUMBER $IMAGE_NAME:$IMAGE_TAG"
+                }
             }
         } 
 
         stage('Trivy Scan') {
-                steps {
-                    script {
-                        sh 'trivy image --severity HIGH,CRITICAL --format table $IMAGE_NAME:$BUILD_NUMBER' // Scan for high/critical vulnerabilities
-                        // You can also output to a file:
-                         sh 'trivy image -f json -o trivy-results.json $IMAGE_NAME:$BUILD_NUMBER'
-                    }
+            steps {
+                script {
+                    sh "trivy image --severity HIGH,CRITICAL --format table $IMAGE_NAME:$BUILD_NUMBER"
+                    sh "trivy image -f json -o trivy-results.json $IMAGE_NAME:$BUILD_NUMBER"
                 }
-         } 
+            }
+        }
+
         stage('Push to Dockerhub') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'DOCKER_LOGIN',  // ID from Jenkins credentials
+                    credentialsId: 'DOCKER_LOGIN',
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
-                )]){
-                    sh'''                    
-                      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                      docker push $IMAGE_NAME:$BUILD_NUMBER
-                      docker push $IMAGE_NAME:$IMAGE_TAG
-                      docker logout                      
-                    '''                   
+                )]) {
+                    sh """
+                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                    docker push $IMAGE_NAME:$BUILD_NUMBER
+                    docker push $IMAGE_NAME:$IMAGE_TAG
+                    docker logout
+                    """
                 }
-                
             }
-        } 
-        stage('Remove Images')   {
+        }
+
+        stage('Remove Images') {
             steps {
                 script {
-                    sh 'docker rmi  $IMAGE_NAME:$BUILD_NUMBER'
-                    sh 'docker rmi  $IMAGE_NAME:$IMAGE_TAG'
+                    sh "docker rmi $IMAGE_NAME:$BUILD_NUMBER || true"
+                    sh "docker rmi $IMAGE_NAME:$IMAGE_TAG || true"
                 }
             }
-        }  
+        }
 
         stage('Update ECS Task Definition') {
             steps {
                 script {
                     sh '''aws ecs describe-task-definition --task-definition arn:aws:ecs:us-east-1:997450571655:task-definition/jenkins-cicd-task --query 'taskDefinition.{family: family, taskRoleArn: taskRoleArn, executionRoleArn: executionRoleArn, networkMode: networkMode, containerDefinitions: containerDefinitions, volumes: volumes, placementConstraints: placementConstraints, requiresCompatibilities: requiresCompatibilities, cpu: cpu, memory: memory}' --output json > task-def.json'''
-                    sh 'cat task-def.json'
+                    
                     def taskDefinition = readFile('task-def.json')
-
                     def newTaskDefinition = taskDefinition.replaceAll(/"image":\\s*".*?"/, '"image": "' + IMAGE_NAME + ':' + IMAGE_TAG + '"')
-
+                    
                     writeFile file: 'new-task-definition.json', text: newTaskDefinition
-                    sh 'cat new-task-definition.json'
-
                     sh 'aws ecs register-task-definition --cli-input-json file://new-task-definition.json'
                 }
             }
@@ -158,7 +154,5 @@ pipeline {
                 }
             }
         }
-
-        
     }
 }
