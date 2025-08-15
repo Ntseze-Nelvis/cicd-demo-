@@ -44,7 +44,7 @@ pipeline {
                 scannerHome = tool "${SONARSCANNER}"
             }
             steps {
-               withSonarQubeEnv("${sonarserver}") {
+               withSonarQubeEnv("${SONARSERVER}") {
                    sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=deploy-ecs_jenkins \
                    -Dsonar.projectName=sonar-token\
                    -Dsonar.projectVersion=1.0 \
